@@ -5,7 +5,7 @@ import Control.Monad (join)
 import Data.List (nub)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
-import Data.Maybe (fromJust)
+import Data.Maybe (fromJust, catMaybes)
 import Control.Monad.State
 -- TODO: nub is bad, try something like nub = toList . Set.fromList ? 
 
@@ -67,7 +67,7 @@ cvars (CEqz a) = vars a
 hullConsistency :: [Constraint] -> IO Box
 hullConsistency cs = hc4 cmap cs whole
   where whole = Map.fromList [ (v,I.whole) | v <- nub (join (map cvars cs)) ]
-        cmap = Map.fromListWith (++) [ (v,[c]) | c <- cs, length (cvars c) > 1, v <- cvars c ]
+        cmap = Map.fromListWith (\a b -> nub $ a ++ b) [ (v,[c]) | c <- cs, length (cvars c) > 1, v <- cvars c ]
 
 -- TODO prioritize constraints, e.g. take constraints with only one variable first
 -- 
@@ -92,7 +92,7 @@ hc4 allC cs = go (Set.fromList cs)
             (item,rest) = (Set.elemAt 0 items, Set.deleteAt 0 items)
             newBox = hc4revise item box
             propagate :: Set.Set Constraint
-            propagate = Set.fromList $ join $ map (\v -> (Map.!) allC v) (changedVars box newBox)
+            propagate = Set.fromList $ join $ catMaybes $ map (\v -> Map.lookup v allC) (changedVars box newBox)
 
 changedVars :: Box -> Box -> [VarId]
 changedVars a b = Map.keys $ Map.filter id $ 

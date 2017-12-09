@@ -5,6 +5,8 @@ import Control.Monad (join)
 import Data.List (nub)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
+import Data.Set (Set)
+import Data.Map (Map)
 import Data.Maybe (fromJust, catMaybes)
 import Control.Monad.State
 -- TODO: nub is bad, try something like nub = toList . Set.fromList ? 
@@ -93,6 +95,39 @@ hc4 allC cs = go (Set.fromList cs)
             newBox = hc4revise item box
             propagate :: Set.Set Constraint
             propagate = Set.fromList $ join $ catMaybes $ map (\v -> Map.lookup v allC) (changedVars box newBox)
+
+data Complementable =
+    VarGe Double
+  | VarLt Double
+
+complement :: Complementable -> Complementable
+complement (VarGe x) = VarLt x
+complement (VarLt x) = VarGe x
+
+decompose :: Interval -> [Complementable]
+decompose i = filter f [VarGe a, VarLt b]
+  where 
+    (a,b) = (I.inf i, I.sup i)
+    f (VarGe x) = not (isInfinite x)
+    f (VarLt x) = not (isInfinite x)
+
+type Lit = Int
+type UnsatCore = [Lit]
+type Model = Map VarId Double
+data Trail = Trail {
+    trailBox :: Box,
+    trailReasons :: [Constraint],
+    trailPrev :: Maybe Trail
+  }
+
+addTrail :: Trail -> Box -> Trail
+addTrail = undefined -- q <- ded(tr), tr <- tr * q
+
+-- modelSearchStart :: [(Lit,Constraint)] -> Either UnsatCore Model
+-- 
+-- modelSearch :: Trail -> [(Int,Constraint)] -> IO (Either UnsatCore Model)
+-- modelSearch tr cs  = do
+  
 
 changedVars :: Box -> Box -> [VarId]
 changedVars a b = Map.keys $ Map.filter id $ 

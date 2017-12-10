@@ -1,5 +1,6 @@
 module Hc4 where
 
+
 import qualified Numeric.Interval as I
 import Control.Monad (join)
 import Data.List (nub)
@@ -66,7 +67,7 @@ cvars :: Constraint -> [VarId]
 cvars (CLez a) = vars a
 cvars (CEqz a) = vars a
 
-hullConsistency :: [Constraint] -> IO Box
+hullConsistency :: [Constraint] -> IO (Maybe Box)
 hullConsistency cs = hc4 cmap cs whole
   where whole = Map.fromList [ (v,I.whole) | v <- nub (join (map cvars cs)) ]
         cmap = Map.fromListWith (\a b -> nub $ a ++ b) [ (v,[c]) | c <- cs, length (cvars c) > 1, v <- cvars c ]
@@ -74,59 +75,46 @@ hullConsistency cs = hc4 cmap cs whole
 -- TODO prioritize constraints, e.g. take constraints with only one variable first
 -- 
 -- Worklist algorithm for fixpoint
-hc4 :: Map.Map VarId [Constraint] -> [Constraint] -> Box -> IO Box
+hc4 :: Map.Map VarId [Constraint] -> [Constraint] -> Box -> IO (Maybe Box)
 hc4 allC cs = go (Set.fromList cs)
   where
-    go :: Set.Set Constraint -> Box -> IO Box
+    go :: Set.Set Constraint -> Box -> IO (Maybe Box)
     go items box
-      | Set.null items = return box
+      | Set.null items = return $ Just box
       | otherwise = do
-          putStrLn $ "goiing" ++ (show item)
-          if newBox /= box then do
+          putStrLn $ "*-> " ++ (show item)
+          case newBox of
+            Just newBox -> if newBox /= box then do
             -- putStrLn $ "  changes:  " 
             -- putStrLn $ "    from: " ++ (show box)
             -- putStrLn $ "    to:   " ++ (show newBox)
             -- putStrLn $ "    diff: " ++ (show $ changedVars box newBox)
             -- putStrLn $ "  propagates to: " ++ (show propagate)
-            go (Set.union propagate rest) newBox
-          else go rest box
+                let propagate = Set.fromList $ join $ catMaybes $ map (\v -> Map.lookup v allC) (changedVars box newBox)
+                go (Set.union propagate rest) newBox
+              else go rest box
+            Nothing -> return Nothing
           where
             (item,rest) = (Set.elemAt 0 items, Set.deleteAt 0 items)
             newBox = hc4revise item box
-            propagate :: Set.Set Constraint
-            propagate = Set.fromList $ join $ catMaybes $ map (\v -> Map.lookup v allC) (changedVars box newBox)
 
-data Complementable =
-    VarGe Double
-  | VarLt Double
+-- Some stuff from thinking about implementing CDCL
+--
+--data Complementable =
+--    VarGe Double
+--  | VarLt Double
+--
+--complement :: Complementable -> Complementable
+--complement (VarGe x) = VarLt x
+--complement (VarLt x) = VarGe x
+--
+--decompose :: Interval -> [Complementable]
+--decompose i = filter f [VarGe a, VarLt b]
+--  where 
+--    (a,b) = (I.inf i, I.sup i)
+--    f (VarGe x) = not (isInfinite x)
+--    f (VarLt x) = not (isInfinite x)
 
-complement :: Complementable -> Complementable
-complement (VarGe x) = VarLt x
-complement (VarLt x) = VarGe x
-
-decompose :: Interval -> [Complementable]
-decompose i = filter f [VarGe a, VarLt b]
-  where 
-    (a,b) = (I.inf i, I.sup i)
-    f (VarGe x) = not (isInfinite x)
-    f (VarLt x) = not (isInfinite x)
-
-type Lit = Int
-type UnsatCore = [Lit]
-type Model = Map VarId Double
-data Trail = Trail {
-    trailBox :: Box,
-    trailReasons :: [Constraint],
-    trailPrev :: Maybe Trail
-  }
-
-addTrail :: Trail -> Box -> Trail
-addTrail = undefined -- q <- ded(tr), tr <- tr * q
-
--- modelSearchStart :: [(Lit,Constraint)] -> Either UnsatCore Model
--- 
--- modelSearch :: Trail -> [(Int,Constraint)] -> IO (Either UnsatCore Model)
--- modelSearch tr cs  = do
   
 
 changedVars :: Box -> Box -> [VarId]
@@ -148,7 +136,7 @@ initIntervalTree b = sc
     st (TSub a b) = ITSub I.whole (st a) (st b)
     st (TMul a b) = ITMul I.whole (st a) (st b)
 
-hc4revise :: Constraint -> Box -> Box
+hc4revise :: Constraint -> Box -> Maybe Box
 hc4revise c b = backwardProp b (forwardEval (initIntervalTree b c))
 
 (.&) = I.intersection
@@ -180,21 +168,31 @@ forwardEval = sc
     comb1 op cstr a = cstr (op (iv ta)) ta
       where ta = st a
 
-backwardProp :: Box -> IConstraint -> Box
-backwardProp b c = execState (sc c) b 
+backwardProp :: Box -> IConstraint -> Maybe Box
+backwardProp b c = execState (sc c) (Just b)
   
   where
-    sc :: IConstraint -> State Box ()
+    sc :: IConstraint -> State (Maybe Box) ()
     sc (ICLez i t) = update i t
     sc (ICEqz i t) = update i t
     iv = itermI
 
-    update :: Interval -> ITerm -> State Box ()
+    mkFail :: State (Maybe Box) ()
+    mkFail = put Nothing
+
+    update :: Interval -> ITerm -> State (Maybe Box) ()
     update ri = st
       where
-        st :: ITerm -> State Box ()
-        st (ITVar i v) = modify (Map.adjust (\bi -> bi .& i .& ri) v)
-        st (ITConst i) = if ri .& i == I.empty then error ("inconsistent  " ++ (show ri) ++ "--" ++ (show i)) else return () -- TODO: if empty, report inconsistency
+        st :: ITerm -> State (Maybe Box) ()
+        st (ITVar i v)
+          | ri .& i == I.empty = mkFail
+          | otherwise = modify (fmap (Map.adjust (\bi -> bi .& i .& ri) v))
+        st (ITConst i) 
+          | ri .& i == I.empty = mkFail
+          | otherwise = return ()
+
+-- if ri .& i == I.empty then error ("inconsistent  " ++ (show ri) ++ "--" ++ (show i)) else return () -- TODO: if empty, report inconsistency
+--
         st (ITAdd i a b) = do update ((i .& ri) - (iv b)) a
                               update ((i .& ri) - (iv a)) b
         st (ITSub i a b) = do update ((i .& ri) + (iv b)) a
@@ -236,3 +234,151 @@ myIntervalDiv ia ib
 (...) a b = case (I.interval a b) of
   Just i -> i
   Nothing -> I.empty
+
+-- model search
+-- incomplete procedure, assumes no splitting is needed, i.e. that only interval propagation is enough.
+-- If SAT, then HC4 will produce the model. (If not, we return unknown)
+-- If UNSAT, we have two main choices:
+--   * Black box binary search on constraint set.
+--     Minimize procedure: Split set of constraints in two: A and B. 
+--       1. If one of them is UNSAT, continue with it (if both are, pick any).
+--       2. If both are SAT, minimize each under the assumption of the other.
+--   * When deducing, maintain graph of each variable's intervals with constraints as edges to 
+--     after-propagation variable intervals. When a constraint causes UNSAT, go back and collect
+--     all involved constraints.
+--
+
+
+data FloatSatResult = Sat Model | Unsat UnsatCore | Unknown deriving (Show)
+
+-- type Lit = Int
+type UnsatCore = [Constraint] -- set of literals?
+type Model = Map VarId Double
+-- data Trail = Trail {
+--     trailBox :: Box,
+--     trailReasons :: [Constraint],
+--     trailPrev :: Maybe Trail
+--   }
+-- 
+-- addTrail :: Trail -> Box -> Trail
+-- addTrail = undefined -- q <- ded(tr), tr <- tr * q
+
+-- modelSearchStart :: [(Lit,Constraint)] -> Either UnsatCore Model
+-- 
+-- modelSearch :: Trail -> [(Int,Constraint)] -> IO (Either UnsatCore Model)
+-- modelSearch tr cs  = do
+
+sample :: Box -> IO Model 
+sample m = do
+  n <- sequence [do putStrLn $ "sampling " ++ (show v)
+                    x <- sampleI v
+                    putStrLn $ "  -> " ++ (show (not (isInfinite (I.inf v))))
+                    return (k,x)
+                 | (k,v) <- Map.toList m ]
+  return (Map.fromList n)
+  where 
+    sampleI :: Interval -> IO Double
+    sampleI i
+      | not (isNaN (I.midpoint i)) && not (isInfinite (I.midpoint i)) = return $ I.midpoint i
+      | not (isInfinite (I.inf i)) = return $ I.inf i
+      | not (isInfinite (I.sup i)) = return $ I.sup i
+      | I.contains i 0 = return 0
+      | otherwise = error "could not sample interval"
+
+testModel :: [Constraint] -> Model -> Bool
+testModel cs m = foldl (&&) True (map (testConstraint (1e-5) m) cs)
+
+testConstraint :: Double -> Model -> Constraint -> Bool
+testConstraint tol m = evalC
+  where
+    evalC :: Constraint -> Bool
+    evalC (CEqz t) = abs (evalT t) < tol
+    evalC (CLez t) = evalT t - tol < 0.0
+    evalT :: Term -> Double
+    evalT (TConst c) = c
+    evalT (TVar v) = (Map.!) m v
+    evalT (TAdd a b) = (+) (evalT a) (evalT b)
+    evalT (TSub a b) = (-) (evalT a) (evalT b)
+    evalT (TMul a b) = (*) (evalT a) (evalT b)
+    evalT (TSqr a) = (^2) (evalT a)
+
+resultBox :: [Constraint] -> Box -> IO FloatSatResult
+resultBox cs box = do 
+  model <- sample box
+  let test = testModel cs model
+  let g
+        | test      = return $ Sat model
+        | otherwise = return $ Unknown
+  g
+
+-- floatingConjSat :: [Constraint] -> IO (Maybe Model)
+-- floatingConjSat cs = do
+--   box <- hullConsistency cs
+--   case box of
+--     Just b -> do
+--       putStrLn $ "floatingConjSat: sat, testing model with " ++ (show $ sample b)
+--       return (resultBox cs b)
+--     Nothing -> do
+--       putStrLn $ "floatingConjSat: unsat, finding core"
+--       fmap Unsat $ (caseSplit [] cs)
+
+floatingConjSat :: [Constraint] -> IO FloatSatResult
+floatingConjSat cs = do
+  box <- hullConsistency cs
+  case box of
+    Just b -> do
+       putStrLn $ "floatingConjSat: sat, testing model"
+       resultBox cs b
+    Nothing -> do
+       putStrLn $ "floatingConjSat: unsat, finding core"
+       core <- blackboxUnsatCore hullConsistency splitMid cs
+       return (Unsat core)
+
+splitMid :: [a] -> ([a],[a])
+splitMid l = splitAt (((length l) + 1) `div` 2) l
+
+
+blackboxUnsatCore :: Show p => ([p] -> IO (Maybe m)) -> 
+                     ([p] -> ([p],[p])) -> 
+                     [p] -> IO [p]
+blackboxUnsatCore satF split ps = caseSplit [] ps
+  where
+    -- Assumption: satF (base ++ ps) == Nothing
+    -- caseSplit :: [p] -> [p] -> IO [p]
+    caseSplit base ps = do
+      putStrLn $ "ENTERED caseSplit with base=" ++ (show base) ++ ", ps=" ++ (show ps)
+      let (a,b) = split ps
+      putStrLn $ "split into " ++ (show (a,b))
+      if length b == 0 then return (base ++ a)
+      else do
+        -- Try sat base + a
+        satA <- satF (base ++ a)
+        case satA of 
+          Nothing -> caseSplit base a -- base + a is unsat
+          Just modelA -> do  -- base + a is SAT with model
+            -- Try sat base + b
+            satB <- satF (base ++ b)
+            case satB of
+              Nothing -> caseSplit base b -- base + b is unsat
+              Just modelB -> do
+                -- Both a and b are SAT (under base), so minimize each under the other
+                coreA <- caseSplit (base ++ b) a
+                coreB <- caseSplit (base ++ a) b
+                return (coreA ++ coreB)
+
+-- caseSplit :: [Constraint] -> [Constraint] -> IO UnsatCore
+-- caseSplit base cs = do
+--   let (a,b) = ([]::[Constraint],[]::[Constraint])
+--   satA <- floatingConjSat (base ++ a)
+--   case satA of
+--     Unknown -> error $ "floatingConjSat could not solve " ++ (show a)
+--     Unsat x -> caseSplit [] a
+--     Sat modelA -> do
+--       satB <- floatingConjSat (base ++ b)
+--       case satB of
+--         Unknown -> error $ "floatingConjSat could not solve " ++ (show b)
+--         Unsat x -> caseSplit [] b
+--         Sat modelB -> do
+--           coreA <- caseSplit b a
+--           coreB <- caseSplit a b
+--           return $ Set.union coreA coreB

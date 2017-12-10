@@ -14,7 +14,7 @@ import SAT.FloatTheory.HullConsistency
 import SAT.FloatTheory.Interval (Interval, interval)
 import qualified SAT.FloatTheory.Interval as I
 
-data FloatSatResult v = Sat (Model v) | Unsat [FConstraint v] | Unknown 
+data FloatSatResult v = Sat (FModel v) | Unsat [FConstraint v] | Unknown 
   deriving (Show)
 
 floatingConjSat :: (Show v, Ord v) => [FConstraint v] -> IO (FloatSatResult v)
@@ -61,7 +61,7 @@ blackboxUnsatCore satF split ps = caseSplit [] ps
 splitMid :: [a] -> ([a],[a])
 splitMid l = splitAt (((length l) + 1) `div` 2) l
 
-sample :: (Show v, Ord v) => Box v -> IO (Model v)
+sample :: (Show v, Ord v) => Box v -> IO (FModel v)
 sample m = do
   n <- sequence [do putStrLn $ "sampling " ++ (show v)
                     x <- sampleI v

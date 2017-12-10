@@ -1,7 +1,7 @@
 module SAT.FloatTheory.Constraints (
   FConstraint(..),
   FExpr(..),
-  Model, 
+  FModel, 
   testModel,
   vars, cvars, 
   (.+.), (.-.), (.*.), (.==.), (.<=.), (.>=.)
@@ -46,12 +46,12 @@ vars (TMul a b) = (vars a) ++ (vars b)
 (.<=.) a b = (CLez (TSub a b))
 (.>=.) a b = b .<=. a
 
-type Model varid = Map varid Double
+type FModel varid = Map varid Double
 
-testModel :: Ord v => [FConstraint v] -> Model v -> Bool
+testModel :: Ord v => [FConstraint v] -> FModel v -> Bool
 testModel cs m = foldl (&&) True (map (testConstraint (1e-5) m) cs)
 
-testConstraint :: Ord v => Double -> Model v -> FConstraint v -> Bool
+testConstraint :: Ord v => Double -> FModel v -> FConstraint v -> Bool
 testConstraint tol m = evalC
   where
 

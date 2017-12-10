@@ -1,7 +1,9 @@
 module Hc4 where
 
+-- Partial decision of satisfiability of conjunctions of 
+-- floating point constraints, with a numerical tolerance.
 
-import qualified Numeric.Interval as I
+-- import qualified Numeric.Interval as I
 import Control.Monad (join)
 import Data.List (nub)
 import qualified Data.Map.Strict as Map
@@ -10,9 +12,12 @@ import Data.Set (Set)
 import Data.Map (Map)
 import Data.Maybe (fromJust, catMaybes)
 import Control.Monad.State
+
+import SAT.FloatTheory.Interval (Interval, interval)
+import qualified SAT.FloatTheory.Interval as I
+
 -- TODO: nub is bad, try something like nub = toList . Set.fromList ? 
 
-type Interval = I.Interval Double
 type Box = Map.Map VarId Interval
 type VarId = Int
 
@@ -71,6 +76,8 @@ hullConsistency :: [Constraint] -> IO (Maybe Box)
 hullConsistency cs = hc4 cmap cs whole
   where whole = Map.fromList [ (v,I.whole) | v <- nub (join (map cvars cs)) ]
         cmap = Map.fromListWith (\a b -> nub $ a ++ b) [ (v,[c]) | c <- cs, length (cvars c) > 1, v <- cvars c ]
+-- note that constraints having (length cvars = 1) have no use 
+-- of having new information propagated into them.
 
 -- TODO prioritize constraints, e.g. take constraints with only one variable first
 -- 
@@ -85,12 +92,12 @@ hc4 allC cs = go (Set.fromList cs)
           putStrLn $ "*-> " ++ (show item)
           case newBox of
             Just newBox -> if newBox /= box then do
-            -- putStrLn $ "  changes:  " 
-            -- putStrLn $ "    from: " ++ (show box)
-            -- putStrLn $ "    to:   " ++ (show newBox)
-            -- putStrLn $ "    diff: " ++ (show $ changedVars box newBox)
-            -- putStrLn $ "  propagates to: " ++ (show propagate)
                 let propagate = Set.fromList $ join $ catMaybes $ map (\v -> Map.lookup v allC) (changedVars box newBox)
+                putStrLn $ "  changes:  " 
+                putStrLn $ "    from: " ++ (show box)
+                putStrLn $ "    to:   " ++ (show newBox)
+                putStrLn $ "    diff: " ++ (show $ changedVars box newBox)
+                putStrLn $ "  propagates to: " ++ (show propagate)
                 go (Set.union propagate rest) newBox
               else go rest box
             Nothing -> return Nothing
@@ -111,7 +118,7 @@ hc4 allC cs = go (Set.fromList cs)
 --decompose :: Interval -> [Complementable]
 --decompose i = filter f [VarGe a, VarLt b]
 --  where 
---    (a,b) = (I.inf i, I.sup i)
+--    (a,b) = (I.lowerBound i, I.upperBound i)
 --    f (VarGe x) = not (isInfinite x)
 --    f (VarLt x) = not (isInfinite x)
 
@@ -121,13 +128,10 @@ changedVars :: Box -> Box -> [VarId]
 changedVars a b = Map.keys $ Map.filter id $ 
   Map.intersectionWith (\ea eb -> ea /= eb) a b
 
-negative = I.idouble $ fromJust $ I.interval (-(read "Infinity")) 0
-positive = I.idouble $ fromJust $ I.interval 0 (read "Infinity")
-
 initIntervalTree :: Box -> Constraint -> IConstraint
 initIntervalTree b = sc
   where 
-    sc (CLez t) = ICLez negative (st t)
+    sc (CLez t) = ICLez I.negative (st t)
     sc (CEqz t) = ICEqz (I.singleton 0) (st t)
     st (TConst c) = ITConst (I.singleton c)
     st (TVar v) = ITVar ((Map.!) b v) v
@@ -155,10 +159,10 @@ forwardEval = sc
     sc (ICEqz i t) = ICEqz (i .& (iv (st t))) (st t)
 
     st :: ITerm -> ITerm
-    st (ITAdd i a b) = comb (+) ITAdd a b
-    st (ITSqr i a) = comb1 (^2) ITSqr a
-    st (ITSub i a b) = comb (-) ITSub a b
-    st (ITMul i a b) = comb (*) ITMul a b
+    st (ITAdd i a b) = comb I.add ITAdd a b
+    st (ITSqr i a) = comb1 ((flip I.pow) 2) ITSqr a
+    st (ITSub i a b) = comb I.sub ITSub a b
+    st (ITMul i a b) = comb I.mul ITMul a b
     st t = t
 
     iv = itermI
@@ -193,47 +197,45 @@ backwardProp b c = execState (sc c) (Just b)
 
 -- if ri .& i == I.empty then error ("inconsistent  " ++ (show ri) ++ "--" ++ (show i)) else return () -- TODO: if empty, report inconsistency
 --
-        st (ITAdd i a b) = do update ((i .& ri) - (iv b)) a
-                              update ((i .& ri) - (iv a)) b
-        st (ITSub i a b) = do update ((i .& ri) + (iv b)) a
-                              update ((iv a) - (i .& ri)) b
-        st (ITMul i a b) = do update ((i .& ri) `myIntervalDiv` (iv b)) a
-                              update ((i .& ri) `myIntervalDiv` (iv a)) b
-        st (ITSqr i a) = update (sqrt (i .& ri)) a -- NOTE. this is only correct when a is always positive (sqrt is positive square root)
+        st (ITAdd i a b) = do update ((i .& ri) `I.sub` (iv b)) a
+                              update ((i .& ri) `I.sub` (iv a)) b
+        st (ITSub i a b) = do update ((i .& ri) `I.add` (iv b)) a
+                              update ((iv a) `I.sub` (i .& ri)) b
+        st (ITMul i a b) = do update ((i .& ri) `I.invmul` (iv b)) a
+                              update ((i .& ri) `I.invmul` (iv a)) b
+        st (ITSqr i a) = update (I.sqrt (i .& ri)) a -- NOTE. this is only correct when a is always positive (sqrt is positive square root)
 
 -- Inverse multiplication of intervals.
 -- The division operator in the intervals package does not give
 -- what we need here, so implemented explicitly.
 --
 infty = (read "Infinity") :: Double
-myIntervalDiv :: Interval -> Interval -> Interval
-myIntervalDiv ia ib
-  | not (0 .@ ib)                  = ia/ib -- library OK for this case
-  | a1 == 0 && a1 < a2 && b1 == 0 && b1 < b2 = 0 ... infty
-  | 0 .@ ia && 0 .@ ib                       = I.whole
-  | not (0 .@ ia) && ib == (I.singleton 0)   = I.empty
-  | a2 < 0 && b1 < b2 && b2 == 0             = (a2/b1) ... infty
-  | a2 < 0 && b1 < 0 && 0 < b2               = I.whole -- error "disjunct"
-  | a2 < 0 && b1 == 0 && b1 < b2             = -infty ... (a2/b2)
-  | a1 > 0 && b1 < b2 && b2 == 0             = -infty ... (a1/b1)
-  | a1 > 0 && b1 < 0 && 0 < b2               = I.whole -- error "disjunct"
-  | a1 > 0 && 0 == b1 && b1 < b2             = (a1/b2) ... infty
-  where
-    (a1,a2,b1,b2) = (I.inf ia, I.sup ia, I.inf ib, I.sup ib)
-    (.@) = I.member
+-- myIntervalDiv :: Interval -> Interval -> Interval
+-- myIntervalDiv ia ib
+--   | not (0 .@ ib)                  = ia/ib -- library OK for this case
+--   | a1 == 0 && a1 < a2 && b1 == 0 && b1 < b2 = 0 ... infty
+--   | 0 .@ ia && 0 .@ ib                       = I.whole
+--   | not (0 .@ ia) && ib == (I.singleton 0)   = I.empty
+--   | a2 < 0 && b1 < b2 && b2 == 0             = (a2/b1) ... infty
+--   | a2 < 0 && b1 < 0 && 0 < b2               = I.whole -- error "disjunct"
+--   | a2 < 0 && b1 == 0 && b1 < b2             = (-infty) ... (a2/b2)
+--   | a1 > 0 && b1 < b2 && b2 == 0             = (-infty) ... (a1/b1)
+--   | a1 > 0 && b1 < 0 && 0 < b2               = I.whole -- error "disjunct"
+--   | a1 > 0 && 0 == b1 && b1 < b2             = (a1/b2) ... infty
+--   where
+--     (a1,a2,b1,b2) = (I.lowerBound ia, I.upperBound ia, I.lowerBound ib, I.upperBound ib)
+--     (.@) = I.member
 
 -- TODO: also interval multiplication with infinity is behaving strange
 --   [0,infty]*[0,infty] = [infty,infty] ???  because 0*infty = NaN ?
 -- myIntervalMul :: Interval -> Interval -> Interval
 -- myIntervalMul ia ib = m a b c d
 --   where
---     (a1,a2,b1,b2) = (I.inf ia, I.sup ia, I.inf ib, I.sup ib)
+--     (a1,a2,b1,b2) = (I.lowerBound ia, I.upperBound ia, I.lowerBound ib, I.upperBound ib)
 --     m 
 
 (...) :: Double -> Double -> Interval
-(...) a b = case (I.interval a b) of
-  Just i -> i
-  Nothing -> I.empty
+(...) = I.interval
 
 -- model search
 -- incomplete procedure, assumes no splitting is needed, i.e. that only interval propagation is enough.
@@ -272,17 +274,18 @@ sample :: Box -> IO Model
 sample m = do
   n <- sequence [do putStrLn $ "sampling " ++ (show v)
                     x <- sampleI v
-                    putStrLn $ "  -> " ++ (show (not (isInfinite (I.inf v))))
+                    putStrLn $ "  -> " ++ (show (not (isInfinite (I.lowerBound v))))
                     return (k,x)
                  | (k,v) <- Map.toList m ]
   return (Map.fromList n)
   where 
     sampleI :: Interval -> IO Double
     sampleI i
-      | not (isNaN (I.midpoint i)) && not (isInfinite (I.midpoint i)) = return $ I.midpoint i
-      | not (isInfinite (I.inf i)) = return $ I.inf i
-      | not (isInfinite (I.sup i)) = return $ I.sup i
-      | I.contains i 0 = return 0
+-- TODO: remove these cases now that we have finiteSample
+      | not (isNaN (I.finiteSample i)) && not (isInfinite (I.finiteSample i)) = return $ I.finiteSample i
+      | not (isInfinite (I.lowerBound i)) = return $ I.lowerBound i
+      | not (isInfinite (I.upperBound i)) = return $ I.upperBound i
+      | I.member 0.0 i = return 0.0
       | otherwise = error "could not sample interval"
 
 testModel :: [Constraint] -> Model -> Bool

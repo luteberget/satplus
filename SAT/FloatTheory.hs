@@ -2,6 +2,7 @@
 
 module SAT.FloatTheory (
    FloatSolver
+  , FloatExpr 
   , newFloatSolver
   , solveWithFloat
   , floatConst
@@ -11,6 +12,7 @@ module SAT.FloatTheory (
   , assertFloat
   )
  where
+
 
 import qualified SAT 
 -- import SAT.Bool
@@ -24,6 +26,8 @@ import Control.Monad (forM, forM_)
 import SAT.FloatTheory.Constraints
 
 type VarId = Int
+type FloatExpr = FExpr VarId
+
 data FloatSolver = FloatSolver {
   solverPtr :: SAT.Solver,
   varCounter :: IORef VarId,

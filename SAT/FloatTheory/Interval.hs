@@ -137,7 +137,7 @@ pow x n | n > 0 = f x (n-1) x
                         f x n y = g x n  where
                                   g x n | even n  = g (mul x x) (n `quot` 2)
                                         | otherwise = f x (n-1) (mul x y)
-_ ^ _            = error "negative exponent"
+pow _ _            = error "negative exponent"
 
 sqrt :: Interval -> Interval
 sqrt = mapIncreasing Prelude.sqrt

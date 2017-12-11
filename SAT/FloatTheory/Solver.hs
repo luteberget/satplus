@@ -1,4 +1,6 @@
 module SAT.FloatTheory.Solver (
+  FloatSatResult(..),
+  floatConjSat
   ) where
 
 -- Partial decision of satisfiability of conjunctions of 
@@ -8,54 +10,73 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Set (Set)
 import Data.Map (Map)
+import Control.Monad (forM, forM_)
 
 import SAT.FloatTheory.Constraints
 import SAT.FloatTheory.HullConsistency
 import SAT.FloatTheory.Interval (Interval, interval)
 import qualified SAT.FloatTheory.Interval as I
 
-data FloatSatResult v = Sat (FModel v) | Unsat [FConstraint v] | Unknown 
+data FloatSatResult v id = Sat (FModel v) | Unsat [id] | Unknown 
   deriving (Show)
 
-floatingConjSat :: (Show v, Ord v) => [FConstraint v] -> IO (FloatSatResult v)
-floatingConjSat cs = do
-  box <- hullConsistency cs
+nub :: Ord v => [v] -> [v]
+nub = Set.toList . Set.fromList
+
+floatConjSat :: (Show id, Ord id, Show v, Ord v) => [FConstraint v] -> [(id, FConstraint v)] -> IO (FloatSatResult v id)
+floatConjSat base cs = do
+  putStrLn $ " --- "
+  putStrLn $ " FloatConjSat with:"
+  forM_ base $ \b -> do
+     putStrLn $ " b*> " ++ (show b)
+  forM_ cs $ \c -> do
+    putStrLn $ " c*> " ++ (show c)
+  box <- hullConsistency (base ++ (map snd cs))
+  -- putStrLn $ "HULL CONSISTENCY: got box " ++ (show box)
+  -- error "ok"
   case box of
     Just b -> do
-       putStrLn $ "floatingConjSat: sat, testing model"
-       resultBox cs b
+       putStrLn $ "floatConjSat: sat, testing model"
+       result <- resultBox (base ++ (map snd cs)) b
+       case result of
+         Just model -> return $ Sat model
+         Nothing -> return Unknown
     Nothing -> do
-       putStrLn $ "floatingConjSat: unsat, finding core"
-       core <- blackboxUnsatCore hullConsistency splitMid cs
+       putStrLn $ "floatConjSat: unsat, finding core"
+       core <- blackboxUnsatCore hullConsistency splitMid base cs
+       -- putStrLn $ "RETURNING CORE " ++ (show core)
+       -- forM_ cs $ \c -> do
+       --   putStrLn $ " c*> " ++ (show c)
+       putStrLn $ "  Core num constraints " ++ (show (length core)) ++ "/" ++ (show (length cs))
        return (Unsat core)
 
-blackboxUnsatCore :: Show p => ([p] -> IO (Maybe m)) ->
-                     ([p] -> ([p],[p])) ->
-                     [p] -> IO [p]
-blackboxUnsatCore satF split ps = caseSplit [] ps
+blackboxUnsatCore :: (Show id, Ord id, Show p, Ord p) => ([p] -> IO (Maybe m)) ->
+                     ([(id,p)] -> ([(id,p)],[(id,p)])) ->
+                     [p] -> [(id,p)] -> IO [id]
+blackboxUnsatCore satF split base ps = caseSplit base ps
   where
     -- Assumption: satF (base ++ ps) == Nothing
-    -- caseSplit :: [p] -> [p] -> IO [p]
+    -- caseSplit :: [p] -> [(id,p)] -> IO [p]
     caseSplit base ps = do
-      putStrLn $ "ENTERED caseSplit with base=" ++ (show base) ++ ", ps=" ++ (show ps)
+      -- putStrLn $ "ENTERED caseSplit with base=" ++ (show base) ++ ", ps=" ++ (show ps)
       let (a,b) = split ps
-      putStrLn $ "split into " ++ (show (a,b))
-      if length b == 0 then return (base ++ a)
+      -- putStrLn $ "split into " ++ (show (a,b))
+      if length b == 0 then return (map fst a)
       else do
         -- Try sat base + a
-        satA <- satF (base ++ a)
+        satA <- satF (base ++ (map snd a))
         case satA of
           Nothing -> caseSplit base a -- base + a is unsat
           Just modelA -> do  -- base + a is SAT with model
             -- Try sat base + b
-            satB <- satF (base ++ b)
+            satB <- satF (base ++ (map snd b))
             case satB of
               Nothing -> caseSplit base b -- base + b is unsat
               Just modelB -> do
                 -- Both a and b are SAT (under base), so minimize each under the other
-                coreA <- caseSplit (base ++ b) a
-                coreB <- caseSplit (base ++ a) b
-                return (coreA ++ coreB)
+                coreA <- caseSplit (base ++ (map snd b)) a
+                coreB <- caseSplit (base ++ (map snd a)) b
+                return $ nub (coreA ++ coreB)
 
 -- TODO get rid of this 
 splitMid :: [a] -> ([a],[a])
@@ -80,12 +101,12 @@ sample m = do
       | otherwise = error "could not sample interval"
 
 
-resultBox :: (Show v, Ord v) => [FConstraint v] -> Box v -> IO (FloatSatResult v)
+resultBox :: (Show v, Ord v) => [FConstraint v] -> Box v -> IO (Maybe (FModel v))
 resultBox cs box = do
   model <- sample box
   let test = testModel cs model
   let g
-        | test      = return $ Sat model
-        | otherwise = return $ Unknown
+        | test      = return $ Just model
+        | otherwise = return $ Nothing
   g
 

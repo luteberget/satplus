@@ -7,9 +7,10 @@ module SAT.FloatTheory (
   , solveWithFloat
   , floatConst
   , newFloat
+  , evalFloatExpr
   , (.+.) , (.-.) , (.*.)
-  , (.==.) , (.<=.), (.>=.)
-  , assertFloat
+  , (.==.) , (.<=.), (.>=.), square
+  , mkFloatConstraint
   )
  where
 
@@ -24,6 +25,7 @@ import Data.Maybe (catMaybes)
 import Control.Monad (forM, forM_)
 
 import SAT.FloatTheory.Constraints
+import SAT.FloatTheory.Solver
 
 type VarId = Int
 type FloatExpr = FExpr VarId
@@ -32,6 +34,7 @@ data FloatSolver = FloatSolver {
   solverPtr :: SAT.Solver,
   varCounter :: IORef VarId,
   constraints :: IORef [(SAT.Lit, FConstraint VarId)],
+  backgroundConstraints  :: IORef [FConstraint VarId],
   fmodel :: IORef (Maybe (FModel VarId))
 }
 
@@ -39,8 +42,9 @@ newFloatSolver :: SAT.Solver -> IO FloatSolver
 newFloatSolver s = do
   counter <- newIORef 0
   constr <- newIORef []
+  bgConstr <- newIORef []
   m <- newIORef Nothing
-  return (FloatSolver s counter constr m)
+  return (FloatSolver s counter constr bgConstr m)
 
 floatConst :: Double -> FExpr VarId
 floatConst x = TConst x
@@ -50,26 +54,15 @@ newFloat fs low high = do
   v <- readIORef (varCounter fs)
   modifyIORef (varCounter fs) (+1)
   let r = (TVar v)
-  x1 <- assertFloat fs (r .>=. (floatConst low))
-  x2 <- assertFloat fs (r .<=. (floatConst high))
-  SAT.addClause (solverPtr fs) [x1] -- TODO keep unconditional constraints away from sat solver?
-  SAT.addClause (solverPtr fs) [x2]
+  modifyIORef (backgroundConstraints fs) ((r .>=. (floatConst low)):)
+  modifyIORef (backgroundConstraints fs) ((r .>=. (floatConst high)):)
   return r
 
-assertFloat :: FloatSolver -> FConstraint VarId -> IO SAT.Lit
-assertFloat fs c = do
+mkFloatConstraint :: FloatSolver -> FConstraint VarId -> IO SAT.Lit
+mkFloatConstraint fs c = do
   l <- SAT.newLit (solverPtr fs)
   modifyIORef (constraints fs) ((l,c):)
   return l
-
-solveConstraints :: [(SAT.Lit, FConstraint VarId)] -> IO (Either (FModel VarId) [SAT.Lit]) -- SAT model or UNSAT core
-solveConstraints cs = do
-  -- putStrLn ("Solving contraints" ++ (show cs))
-  forM_ cs $ \c -> putStrLn (show c)
-  --let (intervals,cs) = takeSimpleIntervalConstraints cs 
-  return (Right [])
-
---takeSimpleIntervalConstraints :: 
 
 solveWithFloat :: FloatSolver -> IO Bool
 solveWithFloat fs = do
@@ -79,17 +72,26 @@ solveWithFloat fs = do
     cs <- fmap catMaybes $ forM cs $ \(lit,c) -> do
       active <- SAT.modelValue (solverPtr fs) lit
       if active then return (Just (lit,c)) else return Nothing
-    r <- (solveConstraints cs)
-    caseMatch r
+    bgcs <- readIORef (backgroundConstraints fs)
+    r <- (floatConjSat bgcs cs)
+    case r of
+      Sat model -> do
+        putStrLn $ "floatsolv iteration SAT: " ++ (show model)
+        writeIORef (fmodel fs) (Just model)
+        return True
+      Unsat core -> do
+        putStrLn $ "floatsolv iteration UNSAT: " ++ (show core)
+        SAT.addClause (solverPtr fs) (map SAT.neg core)
+        solveWithFloat fs
+      Unknown -> error "Float SAT unknown"
   else do
+    putStrLn "SAT solver UNSAT"
     return False
- where 
-   caseMatch :: Either (FModel VarId) [SAT.Lit] -> IO Bool
-   caseMatch (Left model) = do
-     writeIORef (fmodel fs) (Just model)
-     return True
-   caseMatch (Right []) = error "UNSAT with empty core"
-   caseMatch (Right core) = do
-     SAT.addClause (solverPtr fs) (map SAT.neg core)
-     solveWithFloat fs
-  
+
+evalFloatExpr :: FloatSolver -> FloatExpr -> IO Double
+evalFloatExpr fs expr = do
+  model <- readIORef (fmodel fs)
+  case model of
+    Just model -> return $ evalFExpr model expr
+    Nothing -> error "Eval float expr called with no model."
+

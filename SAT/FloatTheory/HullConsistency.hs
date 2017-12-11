@@ -50,15 +50,15 @@ hc4 allC cs = go (Set.fromList cs)
     go items box
       | Set.null items = return $ Just box
       | otherwise = do
-          putStrLn $ "*-> " ++ (show item)
+          -- putStrLn $ "*-> " ++ (show item)
           case newBox of
             Just newBox -> if newBox /= box then do
                 let propagate = Set.fromList $ join $ catMaybes $ map (\v -> Map.lookup v allC) (changedVars box newBox)
-                putStrLn $ "  changes:  "
-                putStrLn $ "    from: " ++ (show box)
-                putStrLn $ "    to:   " ++ (show newBox)
-                putStrLn $ "    diff: " ++ (show $ changedVars box newBox)
-                putStrLn $ "  propagates to: " ++ (show propagate)
+                -- putStrLn $ "  changes:  "
+                -- putStrLn $ "    from: " ++ (show box)
+                -- putStrLn $ "    to:   " ++ (show newBox)
+                -- putStrLn $ "    diff: " ++ (show $ changedVars box newBox)
+                -- putStrLn $ "  propagates to: " ++ (show propagate)
                 go (Set.union propagate rest) newBox
               else go rest box
             Nothing -> return Nothing

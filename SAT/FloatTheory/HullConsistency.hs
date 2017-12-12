@@ -1,6 +1,7 @@
 module SAT.FloatTheory.HullConsistency (
   hullConsistency,
-  Box
+  Box,
+  hc4, initIntervalTree, forwardEval, backwardProp, backwardPropIO
   ) where
 
 import qualified Data.Map.Strict as Map
@@ -11,6 +12,7 @@ import Data.Maybe (catMaybes)
 import Control.Monad.State
 
 import Data.Tree
+-- import Debug.Trace
 
 import SAT.FloatTheory.Interval (Interval, interval)
 import qualified SAT.FloatTheory.Interval as I
@@ -136,6 +138,43 @@ forwardEval = sc
     comb1 op cstr a = cstr (op (iv ta)) ta
       where ta = st a
 
+
+backwardPropIO :: (Show v, Ord v) => Box v -> IConstraint v -> IO ()
+backwardPropIO b c = sc c
+
+  where
+    --sc :: IConstraint v -> State (Maybe (Box v)) ()
+    sc (ICLez i t) = do -- putStrLn $ "(<0)  = " ++ (show i)
+                        update 0 i t
+    sc (ICEqz i t) = update 0 i t
+    iv = itermI
+
+    update :: (Show v,  Ord v)=> Int -> Interval -> ITerm v -> IO ()
+    update indent ri = st
+      where
+        ind = take (2*indent) $ repeat ' '
+        -- st :: ITerm -> State (Maybe (Box v)) ()
+        st (ITVar i v)
+          | ri .& i == I.empty = putStrLn $ ind ++ "fail"
+          | otherwise = putStrLn $ ind ++ "var" ++ (show v) ++ " = " ++ (show (i .& ri))
+        st (ITConst i)
+          | ri .& i == I.empty = putStrLn $ ind ++ "fail"
+          | otherwise = return ()
+
+        st (ITAdd i a b) = do putStrLn $ ind ++ "(+) left  = " ++ (show (((i .& ri) `I.sub` (iv b))))
+                              update (indent+1) ((i .& ri) `I.sub` (iv b)) a
+                              putStrLn $ ind ++ "(+) right = " ++ (show (((i .& ri) `I.sub` (iv a))))
+                              update (indent +1) ((i .& ri) `I.sub` (iv a)) b
+        st (ITSub i a b) = do putStrLn $ ind ++ "(-) left  = " ++ (show ((i .& ri) `I.add` (iv b)))
+                              update (indent +1) ((i .& ri) `I.add` (iv b)) a
+                              putStrLn $ ind ++ "(-) right = " ++ (show ((iv a) `I.sub` (i .& ri)))
+                              update (indent +1) ((iv a) `I.sub` (i .& ri)) b
+        st (ITMul i a b) = do putStrLn $ ind ++ "(*) left  = " ++ (show ((i .& ri) `I.invmul` (iv b)))
+                              update (indent +1) ((i .& ri) `I.invmul` (iv b)) a
+                              putStrLn $ ind ++ "(*) right = " ++ (show ((i .& ri) `I.invmul` (iv a)))
+                              update (indent +1) ((i .& ri) `I.invmul` (iv a)) b
+        st (ITSqr i a) = do putStrLn $ ind ++ "(^2)      = " ++ (show (I.sqrt (i .& ri)))
+                            update (indent +1) (I.symmetric (I.sqrt (i .& ri))) a -- NOTE. this is only correct when a is always positive (sqrt is positive square root)
 
 
 backwardProp :: Ord v => Box v -> IConstraint v -> Maybe (Box v)

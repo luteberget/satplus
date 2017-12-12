@@ -17,7 +17,7 @@ import SAT.FloatTheory.HullConsistency
 import SAT.FloatTheory.Interval (Interval, interval)
 import qualified SAT.FloatTheory.Interval as I
 
-data FloatSatResult v id = Sat (FModel v) | Unsat [id] | Unknown 
+data FloatSatResult v id = Sat (FModel v) | Unsat [id] | Unknown (Box v)
   deriving (Show)
 
 nub :: Ord v => [v] -> [v]
@@ -36,11 +36,16 @@ floatConjSat base cs = do
   -- error "ok"
   case box of
     Just b -> do
-       putStrLn $ "floatConjSat: sat, testing model"
-       result <- resultBox (base ++ (map snd cs)) b
-       case result of
-         Just model -> return $ Sat model
-         Nothing -> return Unknown
+       model <- sample b
+       let ok = testModel (map snd cs) model
+       case ok of 
+         True -> return $ Sat model
+         False -> return $ Unknown b
+       -- putStrLn $ "floatConjSat: sat, testing model"
+       -- result <- resultBox (base ++ (map snd cs)) b
+       -- case result of
+       --   Just model -> return $ Sat model
+       --   Nothing -> return $ Unknown model
     Nothing -> do
        putStrLn $ "floatConjSat: unsat, finding core"
        core <- blackboxUnsatCore hullConsistency splitMid base cs
@@ -101,12 +106,12 @@ sample m = do
       | otherwise = error "could not sample interval"
 
 
-resultBox :: (Show v, Ord v) => [FConstraint v] -> Box v -> IO (Maybe (FModel v))
-resultBox cs box = do
-  model <- sample box
-  let test = testModel cs model
-  let g
-        | test      = return $ Just model
-        | otherwise = return $ Nothing
-  g
+-- resultBox :: (Show v, Ord v) => [FConstraint v] -> Box v -> IO (Maybe (FModel v))
+-- resultBox cs box = do
+--   model <- sample box
+--   let test = testModel cs model
+--   let g
+--         | test      = return $ Just model
+--         | otherwise = return $ Nothing
+--   g
 

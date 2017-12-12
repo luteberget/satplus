@@ -55,7 +55,7 @@ newFloat fs low high = do
   modifyIORef (varCounter fs) (+1)
   let r = (TVar v)
   modifyIORef (backgroundConstraints fs) ((r .>=. (floatConst low)):)
-  modifyIORef (backgroundConstraints fs) ((r .>=. (floatConst high)):)
+  modifyIORef (backgroundConstraints fs) ((r .<=. (floatConst high)):)
   return r
 
 mkFloatConstraint :: FloatSolver -> FConstraint VarId -> IO SAT.Lit

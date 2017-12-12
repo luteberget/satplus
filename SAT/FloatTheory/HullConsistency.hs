@@ -19,7 +19,15 @@ type Box v = Map.Map v Interval
 data IConstraint var =
     ICLez Interval (ITerm var)
   | ICEqz Interval (ITerm var)
-  deriving (Show)
+
+instance Show var => Show (IConstraint var) where
+  --show (ICLez i t) = " < 0 [" ++ (show i) ++ "]\n" ++ (show t)
+  --show (ICEqz i t) = " = 0 [" ++ (show i) ++ "]\n" ++ (show t)
+  show = drawTree . icToTree
+
+icToTree :: Show var => (IConstraint var) -> Tree String
+icToTree (ICLez i t) = Node ("(<0) [" ++ (show i) ++ "]") [itermToTree t]
+icToTree (ICEqz i t) = Node ("(=0) [" ++ (show i) ++ "]") [itermToTree t]
 
 data ITerm var =
     ITConst Interval
@@ -28,7 +36,17 @@ data ITerm var =
   | ITAdd Interval (ITerm var) (ITerm var)
   | ITSub Interval (ITerm var) (ITerm var)
   | ITMul Interval (ITerm var) (ITerm var)
-  deriving (Show)
+
+instance Show var => Show (ITerm var) where
+  show = drawTree . itermToTree
+
+itermToTree :: Show v => (ITerm v) -> Tree String
+itermToTree (ITConst i) = Node ("Const [" ++ (show i) ++ "]") []
+itermToTree (ITVar i v) = Node ("Var x" ++ (show v) ++ " [" ++ (show i) ++ "]") []
+itermToTree (ITSqr i a) = Node ("(^2) [" ++ (show i) ++ "]") [itermToTree a]
+itermToTree (ITAdd i a b) = Node ("(+) [" ++ (show i) ++ "]") [itermToTree a, itermToTree b]
+itermToTree (ITSub i a b) = Node ("(-) [" ++ (show i) ++ "]") [itermToTree a, itermToTree b]
+itermToTree (ITMul i a b) = Node ("(*) [" ++ (show i) ++ "]") [itermToTree a, itermToTree b]
 
 nub :: Ord a => [a] -> [a]
 nub = Set.toList . Set.fromList
@@ -143,5 +161,5 @@ backwardProp b c = execState (sc c) (Just b)
                               update ((iv a) `I.sub` (i .& ri)) b
         st (ITMul i a b) = do update ((i .& ri) `I.invmul` (iv b)) a
                               update ((i .& ri) `I.invmul` (iv a)) b
-        st (ITSqr i a) = update (I.sqrt (i .& ri)) a -- NOTE. this is only correct when a is always positive (sqrt is positive square root)
+        st (ITSqr i a) = update (I.symmetric (I.sqrt (i .& ri))) a 
 

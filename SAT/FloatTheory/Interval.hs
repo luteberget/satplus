@@ -16,6 +16,7 @@ module SAT.FloatTheory.Interval (
   member,
   finiteSample,
   intersection,
+  symmetric,
   add, sub, mul, invmul, pow, sqrt
   ) where
 
@@ -63,6 +64,11 @@ upperBound Empty = nan
 member :: Double -> Interval -> Bool
 member x (Interval a b) = a <= x && x <= b
 member _ Empty = False
+
+symmetric :: Interval -> Interval
+symmetric (Interval a b) = Interval (-m) m
+  where m = max (abs a) (abs b)
+symmetric Empty = Empty
 
 finiteSample :: Interval -> Double
 finiteSample i@(Interval a b)

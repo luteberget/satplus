@@ -22,7 +22,7 @@ data FConstraint v =
   deriving (Ord, Eq) -- TODO: order by priority
 
 instance Show v => Show (FConstraint v) where
-  show (CLez e) = (show e) ++ " >= 0"
+  show (CLez e) = (show e) ++ " <= 0"
   show (CEqz e) = (show e) ++ " == 0"
 
 cvars :: FConstraint v -> [v]

@@ -82,7 +82,8 @@ solveWithFloat fs = do
       Unsat core -> do
         putStrLn $ "floatsolv iteration UNSAT: " ++ (show core)
         SAT.addClause (solverPtr fs) (map SAT.neg core)
-        solveWithFloat fs
+        --solveWithFloat fs
+        return False
       Unknown -> error "Float SAT unknown"
   else do
     putStrLn "SAT solver UNSAT"

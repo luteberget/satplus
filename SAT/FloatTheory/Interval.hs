@@ -118,17 +118,18 @@ mul (Interval a1 a2) (Interval b1 b2) = Interval (minimum combs) (maximum combs)
 
 invmul :: Interval -> Interval -> Interval
 invmul a@(Interval a1 a2) b@(Interval b1 b2) 
+  -- Expect bugs
   | not (member 0.0 b) = Interval (minimum combs) (maximum combs)
   | b == singleton 0.0 = if (member 0.0 a) then whole else empty
   | b1 == 0.0 && a == singleton 0.0 = a
-  | b1 == 0.0 && a2 < 0.0 = Interval (-infty) (a2/b1)
+  | b1 == 0.0 && a2 < 0.0 = Interval (-infty) (a2/b2)
   | b1 == 0.0 && a1 < 0.0 = whole 
   | b1 == 0.0 && a1 == 0.0 = Interval 0 infty
-  | b1 == 0.0 = Interval (a1/b1) (infty)
+  | b1 == 0.0 = Interval (a1/b2) (infty)
   | b2 == 0.0 && a == singleton 0.0 = a
-  | b2 == 0.0 && a2 < 0.0 = Interval (a2/b2) (infty)
+  | b2 == 0.0 && a2 < 0.0 = Interval (a2/b1) (infty)
   | b2 == 0.0 && a1 < 0.0 = whole
-  | b2 == 0.0 = Interval (a1/b2) (infty)
+  | b2 == 0.0 = Interval (a1/b1) (infty)
   | a == singleton 0.0 = a
   | otherwise = whole
   where 

@@ -1,6 +1,6 @@
 module SAT.FloatTheory.HullConsistency (
   hullConsistency,
-  Box
+  hc4, initIntervalTree, forwardEval, backwardProp, backwardPropIO
   ) where
 
 import qualified Data.Map.Strict as Map
@@ -10,11 +10,13 @@ import Data.Map (Map)
 import Data.Maybe (catMaybes)
 import Control.Monad.State
 
+import Data.Tree
+-- import Debug.Trace
+
 import SAT.FloatTheory.Interval (Interval, interval)
 import qualified SAT.FloatTheory.Interval as I
 import SAT.FloatTheory.Constraints
 
-type Box v = Map.Map v Interval
 
 data IConstraint var =
     ICLez Interval (ITerm var)
@@ -61,17 +63,18 @@ hullConsistency cs = hc4 cmap cs whole
 -- TODO prioritize constraints, e.g. take constraints with only one variable first
 -- 
 -- Worklist algorithm for fixpoint
-hc4 :: (Ord var, Show var) => Map.Map var [FConstraint var] -> [FConstraint var] -> Box var -> IO (Maybe (Box var))
+hc4 :: (Ord var, Show var) => Map.Map var [FConstraint var] 
+        -> [FConstraint var] -> Box var -> IO (Maybe (Box var))
 hc4 allC cs = go (Set.fromList cs)
   where
     --go :: Set.Set (FConstraint var) -> Box v -> IO (Maybe (Box var))
     go items box
       | Set.null items = return $ Just box
       | otherwise = do
-          -- putStrLn $ "*-> " ++ (show item)
+          putStrLn $ "*-> " ++ (show item)
           case newBox of
             Just newBox -> if newBox /= box then do
-                let propagate = Set.fromList $ join $ catMaybes $ map (\v -> Map.lookup v allC) (changedVars box newBox)
+                let propagate = Set.fromList $ item:(join $ catMaybes $ map (\v -> Map.lookup v allC) (changedVars box newBox))
                 -- putStrLn $ "  changes:  "
                 -- putStrLn $ "    from: " ++ (show box)
                 -- putStrLn $ "    to:   " ++ (show newBox)
@@ -133,6 +136,43 @@ forwardEval = sc
     comb1 op cstr a = cstr (op (iv ta)) ta
       where ta = st a
 
+
+backwardPropIO :: (Show v, Ord v) => Box v -> IConstraint v -> IO ()
+backwardPropIO b c = sc c
+
+  where
+    --sc :: IConstraint v -> State (Maybe (Box v)) ()
+    sc (ICLez i t) = do -- putStrLn $ "(<0)  = " ++ (show i)
+                        update 0 i t
+    sc (ICEqz i t) = update 0 i t
+    iv = itermI
+
+    update :: (Show v,  Ord v)=> Int -> Interval -> ITerm v -> IO ()
+    update indent ri = st
+      where
+        ind = take (2*indent) $ repeat ' '
+        -- st :: ITerm -> State (Maybe (Box v)) ()
+        st (ITVar i v)
+          | ri .& i == I.empty = putStrLn $ ind ++ "fail"
+          | otherwise = putStrLn $ ind ++ "var" ++ (show v) ++ " = " ++ (show (i .& ri))
+        st (ITConst i)
+          | ri .& i == I.empty = putStrLn $ ind ++ "fail"
+          | otherwise = return ()
+
+        st (ITAdd i a b) = do putStrLn $ ind ++ "(+) left  = " ++ (show (((i .& ri) `I.sub` (iv b))))
+                              update (indent+1) ((i .& ri) `I.sub` (iv b)) a
+                              putStrLn $ ind ++ "(+) right = " ++ (show (((i .& ri) `I.sub` (iv a))))
+                              update (indent +1) ((i .& ri) `I.sub` (iv a)) b
+        st (ITSub i a b) = do putStrLn $ ind ++ "(-) left  = " ++ (show ((i .& ri) `I.add` (iv b)))
+                              update (indent +1) ((i .& ri) `I.add` (iv b)) a
+                              putStrLn $ ind ++ "(-) right = " ++ (show ((iv a) `I.sub` (i .& ri)))
+                              update (indent +1) ((iv a) `I.sub` (i .& ri)) b
+        st (ITMul i a b) = do putStrLn $ ind ++ "(*) left  = " ++ (show ((i .& ri) `I.invmul` (iv b)))
+                              update (indent +1) ((i .& ri) `I.invmul` (iv b)) a
+                              putStrLn $ ind ++ "(*) right = " ++ (show ((i .& ri) `I.invmul` (iv a)))
+                              update (indent +1) ((i .& ri) `I.invmul` (iv a)) b
+        st (ITSqr i a) = do putStrLn $ ind ++ "(^2)      = " ++ (show (I.sqrt (i .& ri)))
+                            update (indent +1) (I.symmetric (I.sqrt (i .& ri))) a -- NOTE. this is only correct when a is always positive (sqrt is positive square root)
 
 
 backwardProp :: Ord v => Box v -> IConstraint v -> Maybe (Box v)

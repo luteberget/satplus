@@ -23,9 +23,11 @@ import qualified SAT
 import Data.IORef
 import Data.Maybe (catMaybes)
 import Control.Monad (forM, forM_)
+import qualified Data.Map as Map
 
 import SAT.FloatTheory.Constraints
 import SAT.FloatTheory.Solver
+import SAT.FloatTheory.Interval
 
 type VarId = Int
 type FloatExpr = FExpr VarId
@@ -64,29 +66,45 @@ mkFloatConstraint fs c = do
   modifyIORef (constraints fs) ((l,c):)
   return l
 
-solveWithFloat :: FloatSolver -> IO Bool
-solveWithFloat fs = do
-  boolsat <- SAT.solve (solverPtr fs) []
-  if boolsat then do
-    cs <- readIORef (constraints fs)
-    cs <- fmap catMaybes $ forM cs $ \(lit,c) -> do
-      active <- SAT.modelValue (solverPtr fs) lit
-      if active then return (Just (lit,c)) else return Nothing
-    bgcs <- readIORef (backgroundConstraints fs)
-    r <- (floatConjSat bgcs cs)
-    case r of
-      Sat model -> do
-        putStrLn $ "floatsolv iteration SAT: " ++ (show model)
-        writeIORef (fmodel fs) (Just model)
-        return True
-      Unsat core -> do
-        putStrLn $ "floatsolv iteration UNSAT: " ++ (show core)
-        SAT.addClause (solverPtr fs) (map SAT.neg core)
-        solveWithFloat fs
-      Unknown -> error "Float SAT unknown"
-  else do
-    putStrLn "SAT solver UNSAT"
-    return False
+addSplitVar :: FloatSolver -> VarId -> Interval -> IO ()
+addSplitVar fs var i = do
+  l <- SAT.newLit (solverPtr fs)
+  let splitVal = finiteSample i
+  let above = (TVar var) .>=. (TConst splitVal)
+  let below = (TVar var) .<=. (TConst splitVal)
+  modifyIORef (constraints fs) ((l, above):)
+  modifyIORef (constraints fs) ((SAT.neg l, below):)
+
+solveWithFloat :: FloatSolver -> FExpr VarId -> IO Bool
+solveWithFloat fs goalF = do 
+  maxvar <- readIORef (varCounter fs)
+  s (cycle $ [0..(maxvar-1)])
+  where 
+    s (splitVar:nextVars) = do
+      boolsat <- SAT.solve (solverPtr fs) []
+      if boolsat then do
+        cs <- readIORef (constraints fs)
+        cs <- fmap catMaybes $ forM cs $ \(lit,c) -> do
+          active <- SAT.modelValue (solverPtr fs) lit
+          if active then return (Just (lit,c)) else return Nothing
+        bgcs <- readIORef (backgroundConstraints fs)
+        r <- (floatConjSat goalF bgcs cs)
+        case r of
+          Sat model -> do
+            putStrLn $ "floatsolv iteration SAT: " ++ (show model)
+            writeIORef (fmodel fs) (Just model)
+            return True
+          Unsat core -> do
+            putStrLn $ "floatsolv iteration UNSAT: " ++ (show core)
+            SAT.addClause (solverPtr fs) (map SAT.neg core)
+            solveWithFloat fs goalF
+          Unknown box -> do
+            putStrLn $ "floatsolv failed, splitting on variable v" ++ (show splitVar)
+            addSplitVar fs splitVar (box Map.! splitVar)
+            s nextVars
+      else do
+        putStrLn "SAT solver UNSAT"
+        return False
 
 evalFloatExpr :: FloatSolver -> FloatExpr -> IO Double
 evalFloatExpr fs expr = do

@@ -7,15 +7,16 @@ module SAT.FloatTheory.Model (
 
 import SAT.FloatTheory.Constraints
 import qualified Data.Vector.Storable as V
+import Debug.Trace
 type Vec a = V.Vector a
 type FloatModel = Vec Double
 
 testModel :: [FloatConstraint] -> FloatModel -> Bool
-testModel cs m = foldl (&&) True (map (testConstraint (1e-5) m) cs)
+testModel cs m = foldl (&&) True (map (testConstraint (1e-2) m) (trace "testModel" (traceShowId cs)))
 
 testConstraint :: Double -> FloatModel -> FloatConstraint -> Bool
 testConstraint tol m (CEqz t) = abs (evalFloatExpr m t) < tol
-testConstraint tol m (CLez t) = (evalFloatExpr m t) - tol < 0.0
+testConstraint tol m (CLez t) = (evalFloatExpr m t) < tol
 
 evalFloatExpr :: FloatModel -> FloatExpr -> Double
 evalFloatExpr m = evalT

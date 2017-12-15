@@ -14,6 +14,7 @@ module SAT.FloatTheory (
 
   -- Theory terms
   , FloatExpr(..)
+  , newFloat
   , number
   , (.+.), (.-.), (.*.)
   , (.==.), (.<=.), (.>=.)

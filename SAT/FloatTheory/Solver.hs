@@ -14,7 +14,7 @@ module SAT.FloatTheory.Solver (
 --
 
 import Data.Maybe (isNothing)
-import Control.Monad (filterM)
+import Control.Monad (filterM, forM, forM_)
 import Control.Monad.Identity
 import Data.IORef
 import qualified Data.Set as Set
@@ -27,6 +27,8 @@ import SAT.FloatTheory.Model
 import SAT.FloatTheory.HullConsistency
 import SAT.FloatTheory.Optimization
 import SAT.FloatTheory.SolverObject
+
+import Debug.Trace
 
 data TheoryStepResult  = TheorySat FloatModel 
                        | TheoryUnsatSubset [SAT.Lit] 
@@ -49,30 +51,39 @@ solveMinimizeFloat fs goal = do
             step <- theoryStep activeC
             case step of
               TheorySat model -> do 
+                putStrLn $ "Theory sat " ++ (show model)
                 writeIORef (fmodel fs) (Just model)
                 return True
               TheoryUnsatSubset lits -> do 
+                putStrLn $ "Theory unsat " ++ (show lits)
                 SAT.addClause (solverPtr fs) (map SAT.neg lits)
                 theoryLoop
           else return False
           
         theoryStep :: [(SAT.Lit, FloatConstraint)] -> IO TheoryStepResult
         theoryStep activeC = do
-          let hcResult = hc (bgcs ++ (map snd activeC))
+          let allConstraints = bgcs ++ (map snd activeC)
+          putStrLn "Theory step"
+          let hcResult = hc allConstraints
           case hcResult of
             Nothing -> do
+              putStrLn "HC unsat"
+              forM_ bgcs $ \c -> putStrLn $ " b> " ++ (show c)
+              forM_ activeC $ \c -> putStrLn $ " c> " ++ (show c)
               let m = hcUnsatMinimal bgcs activeC
               return $ TheoryUnsatSubset m
             Just box -> do
-              optModel <- optSolverModel box (map snd activeC)
-              if testModel (map snd activeC) optModel then
+              putStrLn "HC sat"
+              optModel <- optSolverModel box allConstraints
+              putStrLn $ "opt model " ++ (show optModel)
+              if testModel allConstraints optModel then
                 return (TheorySat optModel)
               else do
                 m <- optUnsatMinimal box bgcs activeC
-                return (TheoryUnsatSubset m)
+                return (TheoryUnsatSubset ( m))
 
         hc :: [FloatConstraint] -> Maybe Box
-        hc = hullConsistency numVars (hcRelTol fparams) (hcIter fparams)
+        hc = hullConsistency (trace "numvars" $ traceShowId numVars) (hcRelTol fparams) (hcIter fparams)
 
         hcUnsatMinimal :: [FloatConstraint] -> [(SAT.Lit, FloatConstraint)] 
                           -> [SAT.Lit]
@@ -88,7 +99,7 @@ solveMinimizeFloat fs goal = do
 
         optUnsatMinimal :: Box -> [FloatConstraint] 
                            -> [(SAT.Lit,FloatConstraint)] -> IO [SAT.Lit]
-        optUnsatMinimal box bg cs = undefined --map fst (Set.toList min)
+        optUnsatMinimal box bg cs = fmap ((map (fromJust.fst)).(Set.toList)) min
           where
             min = blackboxUnsatMinimalM sat splitSet Set.union
                     (Set.fromList [(Nothing,c) | c <- bg]) 
@@ -98,14 +109,14 @@ solveMinimizeFloat fs goal = do
 
 splitSet :: Set a -> (Set a, Maybe (Set a))
 splitSet x = (a, if null b then Nothing else (Just b))
-  where (m,half) = (Set.toAscList x, (Set.size x) `quot` 2)
+  where (m,half) = (Set.toAscList x, ((Set.size x) `quot` 2) + 1)
         (a,b)    = (Set.fromDistinctAscList (take half m),
                     Set.fromDistinctAscList (drop half m))
 
 blackboxUnsatMinimal sat sp jn ba st = runIdentity $
   (blackboxUnsatMinimalM (\x -> return $ sat x)) sp jn ba st
 
-blackboxUnsatMinimalM :: Monad m => (p -> m Bool)  -- Satisifiable
+blackboxUnsatMinimalM :: (Show p, Monad m) => (p -> m Bool)  -- Satisifiable
                       -> (p -> (p,Maybe p))        -- Split 
                       -> (p -> p -> p)             -- Join
                       -> p -> p -> m p             -- Uncond. base + Cond. set
@@ -113,7 +124,7 @@ blackboxUnsatMinimalM sat split join = caseSplit
   where 
     --caseSplit :: p -> p -> m p
     caseSplit base set = do
-      let (a,b) = split set
+      let (a,b) =  (split set)
       if isNothing b then return set
       else do
         satA <- sat (join base a)

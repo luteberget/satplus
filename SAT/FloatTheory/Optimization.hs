@@ -72,9 +72,13 @@ nloptSat x0box objective constraints = do
             (\x -> evalFloatExprGradient x t)
 
   Opt.set_xtol_rel opt xtol >>= checkReturn
+  Opt.set_xtol_abs1 opt xtol >>= checkReturn
+  Opt.set_ftol_rel opt xtol >>= checkReturn
+  Opt.set_ftol_abs opt xtol >>= checkReturn
   Opt.Output result cost params <- Opt.optimize opt x0
 
   if not (Opt.isSuccess result) then do
     putStrLn $ "NLOpt warning: " ++ (show result)
-  else return ()
+  else do
+    putStrLn $ "NLOpt OK: " ++ (show result)
   return params

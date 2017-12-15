@@ -2,6 +2,7 @@ module SAT.FloatTheory.SolverObject (
     newFloatSolver
   , FloatSolver(..)
   , FloatSolverParams(..)
+  , newFloat
   , constraint
   , assertConstraint
   , conditionalConstraint
@@ -91,10 +92,10 @@ setLocalSearchParameterAbsoluteTolerance :: FloatSolver -> Double -> IO ()
 setLocalSearchParameterAbsoluteTolerance fs x = modifyIORef (solverParams fs)
   (\(FloatSolverParams a b c d e f) -> FloatSolverParams a b c d e x)
 
-modelValue :: FloatSolver -> VarId -> IO Double
-modelValue fs v = do
+modelValue :: FloatSolver -> FloatExpr -> IO Double
+modelValue fs t = do
   model <- readIORef (fmodel fs)
   case model of
-    Just model -> return (model V.! v)
+    Just model -> return (evalFloatExpr model t)
     Nothing -> error "FloatSolver: model has not been found"
 

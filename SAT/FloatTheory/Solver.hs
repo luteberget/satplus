@@ -18,6 +18,7 @@ import Control.Monad (filterM)
 import Control.Monad.Identity
 import Data.IORef
 import qualified Data.Set as Set
+import Data.Set (Set)
 import Data.Maybe (fromJust, isNothing, isJust)
 
 import qualified SAT
@@ -34,10 +35,11 @@ solveMinimizeFloat :: FloatSolver -> FloatExpr -> IO Bool
 solveMinimizeFloat fs goal = do
   numVars <- readIORef (varCounter fs)
   cs <- readIORef (constraints fs)
+  bgcs <- readIORef (backgroundConstraints fs)
   fparams <- readIORef (solverParams fs)
-  go numVars cs fparams
+  go numVars cs bgcs fparams
   where 
-    go numVars cs fparams = theoryLoop
+    go numVars cs bgcs fparams = theoryLoop
       where
         theoryLoop :: IO Bool
         theoryLoop = do
@@ -56,42 +58,49 @@ solveMinimizeFloat fs goal = do
           
         theoryStep :: [(SAT.Lit, FloatConstraint)] -> IO TheoryStepResult
         theoryStep activeC = do
-          let hcResult = hc (map snd activeC)
+          let hcResult = hc (bgcs ++ (map snd activeC))
           case hcResult of
             Nothing -> do
-              let m = hcUnsatMinimal activeC
+              let m = hcUnsatMinimal bgcs activeC
               return $ TheoryUnsatSubset m
             Just box -> do
               optModel <- optSolverModel box (map snd activeC)
               if testModel (map snd activeC) optModel then
                 return (TheorySat optModel)
               else do
-                m <- optUnsatMinimal box activeC
+                m <- optUnsatMinimal box bgcs activeC
                 return (TheoryUnsatSubset m)
 
         hc :: [FloatConstraint] -> Maybe Box
         hc = hullConsistency numVars (hcRelTol fparams) (hcIter fparams)
 
-        hcUnsatMinimal :: [(SAT.Lit, FloatConstraint)] -> [SAT.Lit]
-        hcUnsatMinimal cs = map fst (Set.toList min)
+        hcUnsatMinimal :: [FloatConstraint] -> [(SAT.Lit, FloatConstraint)] 
+                          -> [SAT.Lit]
+        hcUnsatMinimal bg cs = map (fromJust.fst) (Set.toList min)
           where
-            min = blackboxUnsatMinimal sat split join Set.empty (Set.fromList cs)
+            min = blackboxUnsatMinimal sat splitSet Set.union
+                    (Set.fromList [(Nothing,c) | c <- bg]) 
+                    (Set.fromList [(Just v, c) | (v,c) <- cs])
             sat s = isJust (hc (map snd (Set.toList s)))
 
         optSolverModel :: Box -> [FloatConstraint] -> IO FloatModel
         optSolverModel b c = nloptSat b goal c
 
-        optUnsatMinimal :: Box -> [(SAT.Lit,FloatConstraint)] -> IO [SAT.Lit]
-        optUnsatMinimal box cs = undefined --map fst (Set.toList min)
+        optUnsatMinimal :: Box -> [FloatConstraint] 
+                           -> [(SAT.Lit,FloatConstraint)] -> IO [SAT.Lit]
+        optUnsatMinimal box bg cs = undefined --map fst (Set.toList min)
           where
-            min = blackboxUnsatMinimal sat split join Set.empty (Set.fromList cs)
-            sat s = undefined -- testModel (map snd cs) 
+            min = blackboxUnsatMinimalM sat splitSet Set.union
+                    (Set.fromList [(Nothing,c) | c <- bg]) 
+                    (Set.fromList [(Just v, c) | (v,c) <- cs])
+            sat s = fmap (testModel (map snd (Set.toList s)))
+                         (optSolverModel box (map snd (Set.toList s)))
 
-        split x = (a, if null b then Nothing else (Just b))
-          where (m,half) = (Set.toAscList x, (Set.size x) `quot` 2)
-                (a,b)    = (Set.fromDistinctAscList (take half m),
-                            Set.fromDistinctAscList (drop half m))
-        join = Set.union
+splitSet :: Set a -> (Set a, Maybe (Set a))
+splitSet x = (a, if null b then Nothing else (Just b))
+  where (m,half) = (Set.toAscList x, (Set.size x) `quot` 2)
+        (a,b)    = (Set.fromDistinctAscList (take half m),
+                    Set.fromDistinctAscList (drop half m))
 
 blackboxUnsatMinimal sat sp jn ba st = runIdentity $
   (blackboxUnsatMinimalM (\x -> return $ sat x)) sp jn ba st
